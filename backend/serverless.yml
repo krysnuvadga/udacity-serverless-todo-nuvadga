@@ -1,11 +1,23 @@
 service:
-  name: ross-serverless-todo-app
+  name: serverless-todo-app
 
 plugins:
   - serverless-webpack
   - serverless-iam-roles-per-function
+  - serverless-reqvalidator-plugin
+  - serverless-plugin-tracing
+
 
 provider:
+  tracing: true
+  iamRoleStatements:
+    - Effect: "Allow" # xray permissions (required)
+      Action:
+        - "xray:PutTraceSegments"
+        - "xray:PutTelemetryRecords"
+      Resource:
+        - "*"
+    
   name: aws
   runtime: nodejs10.x
 
@@ -13,11 +25,15 @@ provider:
   region: ${opt:region, 'us-west-1'}
 
   environment:
-    TODOS_TABLE: Todos-${self:provider.stage}
+    TODOS_TABLE: Todo-${self:provider.stage}
     AUTH_0_SECRET: z2JvJFPCw4F2SljDrRt2tQQIy9e3MArsWEYFv2MVpyTjO4b5DVjXhHqfewYvvjvg
-    S3_BUCKET: ross-serverless-todo-s3-${self:provider.stage}
+    S3_BUCKET: chris-serverless-todo-s3-${self:provider.stage}
     SIGNED_URL_EXPIRATION: 300
-
+custom:
+  models:
+    - name: GroupRequest
+      contentType: application/json
+      schema: ${file(models/create-todoitem-request.json)}
 functions:
   Auth:
     handler: src/lambda/auth/auth0Authorizer.handler
@@ -49,6 +65,9 @@ functions:
           method: post
           path: todos
           cors: true
+          reqValidatorName: RequestBodyValidator
+          requestModels:
+            'application/json': GroupRequest
     iamRoleStatementsName: ${self:service.name}-create-todo-role-${self:provider.stage}
     iamRoleStatements:
     - Effect: Allow
@@ -108,6 +127,16 @@ functions:
 
 resources:
   Resources:
+
+    RequestBodyValidator:
+      Type: AWS::ApiGateway::RequestValidator
+      Properties:
+        Name: 'request-body-validator'
+        RestApiId:
+          Ref: ApiGatewayRestApi
+        ValidateRequestBody: true
+        ValidateRequestParameters: false
+
     # TODO: Add any necessary AWS resources
     TodosDynamoDBTable:
       Type: AWS::DynamoDB::Table
