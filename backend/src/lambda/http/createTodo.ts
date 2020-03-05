@@ -1,47 +1,36 @@
-import { APIGatewayProxyHandler, APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda'
-import * as AWS from 'aws-sdk'
-import * as AWSXRay from 'aws-xray-sdk'
+/// Imports
 import 'source-map-support/register'
-import * as uuid from 'uuid'
-import { parseUserId } from '../../auth/utils'
+import { APIGatewayProxyEvent, APIGatewayProxyHandler, APIGatewayProxyResult } from 'aws-lambda'
+import { CreateTodoRequest } from '../../requests/createTodoRequest'
+import { AuthHelper } from '../../helpers/authHelper'
+import { TodosRepository } from '../../data/dataLayer/todosRepository'
+import { ResponseHelper } from '../../helpers/responseHelper'
+import { createLogger } from '../../utils/logger'
 
-const XAWS = AWSXRay.captureAWS(AWS)
-const docClient = new XAWS.DynamoDB.DocumentClient()
 
-const todosTable = process.env.TODOS_TABLE
+/// Variables
+const logger = createLogger('todos')
+const authHelper = new AuthHelper()
 
+/**
+ * Create new Todo Item
+ * @param event API gateway event
+ */
 export const handler: APIGatewayProxyHandler = async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
-    
-    console.log("EVENT:", event);
+  
+    // parse todo field from event body
+    const newTodo: CreateTodoRequest = JSON.parse(event.body)
 
-    const todoId = uuid.v4()
+    // get user id using JWT from Authorization header
+    const userId = authHelper.getUserId(event.headers['Authorization'])
+    logger.info(`create todo for user ${userId} with data ${newTodo}`)
 
-    const parsedBody = JSON.parse(event.body)
+    // Save todo item to database
+    const item = await new TodosRepository()
+                            .createTodo(newTodo,userId)
 
-    const authHeader = event.headers.Authorization
-    const authSplit = authHeader.split(" ")
-    const token = authSplit[1]
+    // return success response                            
+    return new ResponseHelper()
+                .generateDataSuccessResponse(201,'item',item)
 
-    console.log("test",token)
-
-    const item = {
-      todoId: todoId,
-        userId: parseUserId(token),
-        ...parsedBody
-    }
-
-    await docClient.put({
-        TableName: todosTable,
-        Item: item
-    }).promise()
-
-    return {
-        statusCode: 201,
-        headers: {
-            'Access-Control-Allow-Origin': '*'
-        },
-        body: JSON.stringify({
-          item
-        })
-    }
 }

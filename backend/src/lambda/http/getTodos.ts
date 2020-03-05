@@ -1,42 +1,38 @@
-import { APIGatewayProxyHandler, APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda'
-import * as AWS from 'aws-sdk'
-import * as AWSXRay from 'aws-xray-sdk'
+/// Imports
 import 'source-map-support/register'
-import { parseUserId } from '../../auth/utils'
+import { APIGatewayProxyEvent, APIGatewayProxyResult, APIGatewayProxyHandler } from 'aws-lambda'
+import { AuthHelper } from '../../helpers/authHelper'
+import { TodosRepository } from '../../data/dataLayer/todosRepository'
+import { StorageHelper } from '../../helpers/storageHelper'
+import { ResponseHelper } from '../../helpers/responseHelper'
+import { createLogger } from '../../utils/logger'
 
-const XAWS = AWSXRay.captureAWS(AWS)
-const docClient = new XAWS.DynamoDB.DocumentClient()
+/// Variables
+const s3Helper = new StorageHelper()
+const apiResponseHelper= new ResponseHelper()
+const logger = createLogger('todos')
+const authHelper = new AuthHelper()
 
-const todosTable = process.env.TODOS_TABLE
-
+/**
+ * Get authorized user todos list
+ * @param event API gateway Event
+ */
 export const handler: APIGatewayProxyHandler = async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
-    
-    console.log("EVENT:", event);
-
-    const authHeader = event.headers.Authorization
-    const authSplit = authHeader.split(" ")
-    const userId = parseUserId(authSplit[1])
-    
-    const result = await docClient.query({
-        TableName : todosTable,
-        IndexName: "UserIdIndex",
-        KeyConditionExpression: 'userId = :userId',
-        ExpressionAttributeValues: {
-            ':userId': userId
-        },
   
-        ScanIndexForward: false
-    }).promise()
+    // get user id using JWT from Authorization header
+    const userId = authHelper.getUserId(event.headers['Authorization']) 
+    logger.info(`get groups for user ${userId}`)
 
-    const items = result.Items
-
-    return {
-        statusCode: 200,
-        headers: {
-            'Access-Control-Allow-Origin': '*'
-        },
-        body: JSON.stringify({
-            items
-        })
+    // Get user's Todos
+    const result = await new TodosRepository().getUserTodos(userId)
+    
+    // Generate todos pre-signed get url for todos with uploaded images
+    for(const record of result){
+        if(record.hasImage){
+            record.attachmentUrl = await s3Helper.getTodoAttachmentUrl(record.todoId)
+        }
     }
+
+    // return success response
+    return apiResponseHelper.generateDataSuccessResponse(200,'items',result)
 }

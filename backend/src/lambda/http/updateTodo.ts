@@ -1,49 +1,52 @@
-import { APIGatewayProxyHandler, APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda'
-import * as AWS from 'aws-sdk'
-import * as AWSXRay from 'aws-xray-sdk'
+/// Imports
 import 'source-map-support/register'
-//import { parseUserId } from '../../auth/utils'
+import { APIGatewayProxyEvent, APIGatewayProxyHandler, APIGatewayProxyResult } from 'aws-lambda'
+import { AuthHelper } from '../../helpers/authHelper'
 import { UpdateTodoRequest } from '../../requests/UpdateTodoRequest'
+import { TodosRepository } from '../../data/dataLayer/todosRepository'
+import { ResponseHelper } from '../../helpers/responseHelper'
+import { createLogger } from '../../utils/logger'
 
-const XAWS = AWSXRay.captureAWS(AWS)
-const docClient = new XAWS.DynamoDB.DocumentClient()
+/// Variables
+const logger = createLogger('todos')
+const todosAccess = new TodosRepository()
+const apiResponseHelper = new ResponseHelper()
+const authHelper = new AuthHelper()
 
+/**
+ * Update existing todo belong to authorized user
+ * @param event API getway event
+ */
 export const handler: APIGatewayProxyHandler = async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
-  const todoId = event.pathParameters.todoId
-  const updatedTodo: UpdateTodoRequest = JSON.parse(event.body)
+  
+    // get todo id from path parameters
+    const todoId = event.pathParameters.todoId
 
-  const todosTable = process.env.TODOS_TABLE
+    //Extract update fields from event body
+    const updatedTodo: UpdateTodoRequest = JSON.parse(event.body)
+    
+    // get user id using JWT from Authorization header
+    const userId = authHelper.getUserId(event.headers['Authorization'])
+  
+    // get todo item if any
+    const item = await todosAccess.getTodoById(todoId)
+  
+    // validate todo already exists
+    if(item.Count == 0){
+        logger.error(`user ${userId} requesting update for non exists todo with id ${todoId}`)
+        return apiResponseHelper.generateErrorResponse(400,'TODO not exists')
+    } 
 
-  // TODO: Update a TODO item with the provided id using values in the "updatedTodo" object
+    // validate todo belong to authorized user
+    if(item.Items[0].userId !== userId){
+        logger.error(`user ${userId} requesting update todo does not belong to his account with id ${todoId}`)
+        return apiResponseHelper.generateErrorResponse(400,'TODO does not belong to authorized user')
+    }
 
-  //const authHeader = event.headers.Authorization
-  //const authSplit = authHeader.split(" ")
-  //const token = authSplit[1]
+    logger.info(`User ${userId} updating group ${todoId} to be ${updatedTodo}`)
 
-  const updateTodoParams = {
-    TableName: todosTable,
-    Key: { "todoId": todoId },
-    UpdateExpression: "set #n = :a, dueDate = :b, done = :c",
-    ExpressionAttributeValues:{
-      ":a": updatedTodo['name'],
-      ":b": updatedTodo.dueDate,
-      ":c": updatedTodo.done
-    },
-    ExpressionAttributeNames:{
-      "#n": "name"
-    },
-    ReturnValues:"UPDATED_NEW"
-  }
+    // update todo 
+    await new TodosRepository().updateTodo(updatedTodo,todoId)
 
-const runthis = await docClient.update(updateTodoParams).promise()
-
-return {
-    statusCode: 201,
-    headers: {
-        'Access-Control-Allow-Origin': '*'
-    },
-    body: JSON.stringify({
-      runthis
-    })
-}
+    return apiResponseHelper.generateEmptySuccessResponse(204)
 }
